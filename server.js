@@ -1,4 +1,157 @@
-// server.js (CommonJS)
+// const express = require('express');
+// const http = require('http');
+// const { Server } = require('socket.io');
+// const path = require('path');
+
+// const app = express();
+// const server = http.createServer(app);
+// const io = new Server(server);
+
+// app.use(express.static(path.join(__dirname, 'public')));
+
+// // Sessions store
+// const sessions = {}; // { sessionId: { phase, timeLeft, running, hostId, pomodoroCount, workTimeTotal, breakTimeTotal, timers, settings } }
+
+// // Default settings
+// const defaultSettings = {
+//     workMinutes: 25,
+//     breakMinutes: 5,
+//     longBreakMinutes: 15
+// };
+
+// function createSession(sessionId, hostId) {
+//     sessions[sessionId] = {
+//         phase: 'work',
+//         timeLeft: defaultSettings.workMinutes * 60,
+//         running: false,
+//         hostId,
+//         pomodoroCount: 0,
+//         workTimeTotal: 0,
+//         breakTimeTotal: 0,
+//         timers: null,
+//         settings: { ...defaultSettings }
+//     };
+// }
+
+// function startTimer(sessionId) {
+//     const s = sessions[sessionId];
+//     if (!s || s.running) return;
+//     s.running = true;
+
+//     s.timers = setInterval(() => {
+//         if (s.timeLeft > 0) {
+//             s.timeLeft--;
+//             if (s.phase === 'work') s.workTimeTotal++;
+//             else s.breakTimeTotal++;
+//         } else {
+//             // Phase change
+//             if (s.phase === 'work') {
+//                 s.pomodoroCount++;
+//                 if (s.pomodoroCount % 4 === 0) {
+//                     s.phase = 'longBreak';
+//                     s.timeLeft = s.settings.longBreakMinutes * 60;
+//                 } else {
+//                     s.phase = 'shortBreak';
+//                     s.timeLeft = s.settings.breakMinutes * 60;
+//                 }
+//             } else if (s.phase === 'shortBreak') {
+//                 s.phase = 'work';
+//                 s.timeLeft = s.settings.workMinutes * 60;
+//             } else if (s.phase === 'longBreak') {
+//                 s.phase = 'work';
+//                 s.timeLeft = s.settings.workMinutes * 60;
+//                 s.running = false;
+//                 clearInterval(s.timers);
+//                 io.to(sessionId).emit('longBreakEnded');
+//             }
+
+//             io.to(sessionId).emit('phaseChange', s.phase);
+//         }
+
+//         io.to(sessionId).emit('timerUpdate', s);
+//     }, 1000);
+// }
+
+// function pauseTimer(sessionId) {
+//     const s = sessions[sessionId];
+//     if (!s) return;
+//     s.running = false;
+//     clearInterval(s.timers);
+// }
+
+// function resetTimer(sessionId) {
+//     const s = sessions[sessionId];
+//     if (!s) return;
+//     s.phase = 'work';
+//     s.timeLeft = s.settings.workMinutes * 60;
+//     s.running = false;
+//     s.pomodoroCount = 0;
+//     s.workTimeTotal = 0;
+//     s.breakTimeTotal = 0;
+//     clearInterval(s.timers);
+// }
+
+// io.on('connection', (socket) => {
+//     socket.on('createSession', () => {
+//         const sessionId = Math.random().toString(36).substring(2, 6).toUpperCase();
+//         createSession(sessionId, socket.id);
+//         socket.join(sessionId);
+//         socket.emit('sessionCreated', { sessionId });
+//         io.to(sessionId).emit('timerUpdate', sessions[sessionId]);
+//     });
+
+//     socket.on('joinSession', (sessionId) => {
+//         if (!sessions[sessionId]) {
+//             socket.emit('sessionError', { message: 'Session not found' });
+//             return;
+//         }
+//         socket.join(sessionId);
+//         socket.emit('sessionJoined', { sessionId, state: sessions[sessionId] });
+//     });
+
+//     socket.on('startTimer', ({ sessionId }) => {
+//         if (!sessions[sessionId] || sessions[sessionId].hostId !== socket.id) return;
+//         startTimer(sessionId);
+//     });
+
+//     socket.on('pauseTimer', ({ sessionId }) => {
+//         if (!sessions[sessionId] || sessions[sessionId].hostId !== socket.id) return;
+//         pauseTimer(sessionId);
+//     });
+
+//     socket.on('resetTimer', ({ sessionId }) => {
+//         if (!sessions[sessionId] || sessions[sessionId].hostId !== socket.id) return;
+//         resetTimer(sessionId);
+//         io.to(sessionId).emit('timerUpdate', sessions[sessionId]);
+//     });
+
+//     socket.on('updateTimes', ({ sessionId, workMinutes, breakMinutes, longBreakMinutes }) => {
+//         if (!sessions[sessionId] || sessions[sessionId].hostId !== socket.id) return;
+//         sessions[sessionId].settings = { workMinutes, breakMinutes, longBreakMinutes };
+//         if (!sessions[sessionId].running) {
+//             sessions[sessionId].timeLeft = workMinutes * 60;
+//             sessions[sessionId].phase = 'work';
+//         }
+//         io.to(sessionId).emit('timerUpdate', sessions[sessionId]);
+//     });
+
+//     socket.on('disconnect', () => {
+//         for (const [id, s] of Object.entries(sessions)) {
+//             if (s.hostId === socket.id) {
+//                 io.to(id).emit('hostLeft');
+//                 s.running = false;
+//                 clearInterval(s.timers);
+//             }
+//         }
+//     });
+// });
+
+// server.listen(3000, () => {
+//     console.log('Server running on http://localhost:3000');
+// });
+
+
+// server.js
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -12,21 +165,17 @@ const io = new Server(server);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR));
 
-const DURATIONS = {
-  work: 25 * 60,
-  shortBreak: 5 * 60,
-  longBreak: 30 * 60,
-};
-
-const sessions = {}; // sessionId -> session object
+// sessions store: per-session settings and timer state
+const sessions = {}; // { sessionId: { hostId, phase, timeLeft, running, pomodoroCount, workTimeTotal, breakTimeTotal, timerRef, settings } }
 
 function makeId() {
-  return crypto.randomBytes(3).toString('hex'); // 6 chars
+  return crypto.randomBytes(3).toString('hex').toUpperCase();
 }
 
 function emitState(sessionId) {
   const s = sessions[sessionId];
   if (!s) return;
+  // send a clean state object
   io.to(sessionId).emit('timerUpdate', {
     timeLeft: s.timeLeft,
     phase: s.phase,
@@ -35,6 +184,7 @@ function emitState(sessionId) {
     workTimeTotal: s.workTimeTotal,
     breakTimeTotal: s.breakTimeTotal,
     hostId: s.hostId,
+    settings: s.settings
   });
 }
 
@@ -45,38 +195,42 @@ function startSessionTimer(sessionId) {
 
   if (s.timerRef) clearInterval(s.timerRef);
   s.timerRef = setInterval(() => {
-    // tick
-    s.timeLeft = Math.max(0, s.timeLeft - 1);
+    if (s.timeLeft > 0) {
+      s.timeLeft = s.timeLeft - 1;
+      if (s.phase === 'work') s.workTimeTotal++;
+      else s.breakTimeTotal++;
+    }
 
-    // accumulate totals (1 second)
-    if (s.phase === 'work') s.workTimeTotal++;
-    else s.breakTimeTotal++;
-
-    // finished this phase?
     if (s.timeLeft <= 0) {
+      // phase finished -> switch
       if (s.phase === 'work') {
         s.pomodoroCount++;
-        // after 4 pomodoros -> long break
+        // decide short or long break
         if (s.pomodoroCount % 4 === 0) {
           s.phase = 'longBreak';
-          s.timeLeft = DURATIONS.longBreak;
+          s.timeLeft = s.settings.longBreakMinutes * 60;
+          io.to(sessionId).emit('playSound', { type: 'longBreak' });
         } else {
           s.phase = 'shortBreak';
-          s.timeLeft = DURATIONS.shortBreak;
+          s.timeLeft = s.settings.breakMinutes * 60;
+          io.to(sessionId).emit('playSound', { type: 'shortBreak' });
         }
       } else if (s.phase === 'shortBreak') {
         s.phase = 'work';
-        s.timeLeft = DURATIONS.work;
+        s.timeLeft = s.settings.workMinutes * 60;
+        io.to(sessionId).emit('playSound', { type: 'work' });
       } else if (s.phase === 'longBreak') {
-        // stop after long break
-        s.running = false;
-        clearInterval(s.timerRef);
-        s.timerRef = null;
-        // Reset phase to work and set timeLeft to work length (but do not start)
+        // After long break: stop and reset to work-phase (per preference)
         s.phase = 'work';
-        s.timeLeft = DURATIONS.work;
-        io.to(sessionId).emit('longBreakEnded');
+        s.timeLeft = s.settings.workMinutes * 60;
+        s.running = false;
+        if (s.timerRef) {
+          clearInterval(s.timerRef);
+          s.timerRef = null;
+        }
+        io.to(sessionId).emit('playSound', { type: 'sessionEnd' });
         emitState(sessionId);
+        io.to(sessionId).emit('longBreakEnded');
         return;
       }
     }
@@ -87,7 +241,7 @@ function startSessionTimer(sessionId) {
   emitState(sessionId);
 }
 
-function stopSessionTimer(sessionId) {
+function pauseSessionTimer(sessionId) {
   const s = sessions[sessionId];
   if (!s) return;
   s.running = false;
@@ -106,7 +260,7 @@ function resetSession(sessionId) {
     s.timerRef = null;
   }
   s.phase = 'work';
-  s.timeLeft = DURATIONS.work;
+  s.timeLeft = s.settings.workMinutes * 60;
   s.running = false;
   s.pomodoroCount = 0;
   s.workTimeTotal = 0;
@@ -118,21 +272,22 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
   socket.on('createSession', () => {
-    const sessionId = makeId().toUpperCase();
+    const sessionId = makeId();
     sessions[sessionId] = {
       hostId: socket.id,
-      timeLeft: DURATIONS.work,
       phase: 'work',
+      timeLeft: 25 * 60,
       running: false,
       pomodoroCount: 0,
       workTimeTotal: 0,
       breakTimeTotal: 0,
       timerRef: null,
+      settings: { workMinutes: 25, breakMinutes: 5, longBreakMinutes: 15 }
     };
     socket.join(sessionId);
     socket.emit('sessionCreated', { sessionId });
     emitState(sessionId);
-    console.log(`Session created ${sessionId} by ${socket.id}`);
+    console.log(`Session ${sessionId} created by ${socket.id}`);
   });
 
   socket.on('joinSession', (sessionId) => {
@@ -142,19 +297,13 @@ io.on('connection', (socket) => {
       return;
     }
     socket.join(sessionId);
-    socket.emit('sessionJoined', {
-      sessionId,
-      state: {
-        timeLeft: s.timeLeft,
-        phase: s.phase,
-        running: s.running,
-        pomodoroCount: s.pomodoroCount,
-        workTimeTotal: s.workTimeTotal,
-        breakTimeTotal: s.breakTimeTotal,
-        hostId: s.hostId,
-      },
-    });
-    // Also send current state to the room (so new client sees same)
+    // inform the joiner with current state
+    socket.emit('sessionJoined', { sessionId, state: {
+      timeLeft: s.timeLeft, phase: s.phase, running: s.running,
+      pomodoroCount: s.pomodoroCount, workTimeTotal: s.workTimeTotal,
+      breakTimeTotal: s.breakTimeTotal, hostId: s.hostId, settings: s.settings
+    }});
+    // broadcast current state to room too (so UI for everyone consistent)
     emitState(sessionId);
     console.log(`Socket ${socket.id} joined ${sessionId}`);
   });
@@ -172,7 +321,7 @@ io.on('connection', (socket) => {
     const s = sessions[sessionId];
     if (!s) return socket.emit('sessionError', { message: 'Session not found' });
     if (socket.id !== s.hostId) return socket.emit('sessionError', { message: 'Only host can pause' });
-    stopSessionTimer(sessionId);
+    pauseSessionTimer(sessionId);
     console.log(`Host ${socket.id} paused timer for ${sessionId}`);
   });
 
@@ -184,41 +333,58 @@ io.on('connection', (socket) => {
     console.log(`Host ${socket.id} reset session ${sessionId}`);
   });
 
-  socket.on('updateTimes', ({ sessionId, workMinutes, breakMinutes }) => {
-  const s = sessions[sessionId];
-  if (!s) return socket.emit('sessionError', { message: 'Session not found' });
-  if (socket.id !== s.hostId) return socket.emit('sessionError', { message: 'Only host can update times' });
+  socket.on('updateTimes', ({ sessionId, workMinutes, breakMinutes, longBreakMinutes }) => {
+    const s = sessions[sessionId];
+    if (!s) return socket.emit('sessionError', { message: 'Session not found' });
+    if (socket.id !== s.hostId) return socket.emit('sessionError', { message: 'Only host can update times' });
 
-  // Update durations in seconds
-  DURATIONS.work = workMinutes * 60;
-  DURATIONS.shortBreak = breakMinutes * 60;
+    // Validate numeric inputs
+    workMinutes = Math.max(1, parseInt(workMinutes, 10) || s.settings.workMinutes);
+    breakMinutes = Math.max(1, parseInt(breakMinutes, 10) || s.settings.breakMinutes);
+    longBreakMinutes = Math.max(1, parseInt(longBreakMinutes, 10) || s.settings.longBreakMinutes);
 
-  // If we're not running, reset timeLeft to new work duration
-  if (!s.running && s.phase === 'work') {
-    s.timeLeft = DURATIONS.work;
-  } else if (!s.running && s.phase === 'shortBreak') {
-    s.timeLeft = DURATIONS.shortBreak;
-  }
+    s.settings = { workMinutes, breakMinutes, longBreakMinutes };
 
-  emitState(sessionId);
-  console.log(`Host ${socket.id} updated times for ${sessionId}: Work=${workMinutes}m Break=${breakMinutes}m`);
-});
+    // If timer is not running, adjust timeLeft to match current phase
+    if (!s.running) {
+      if (s.phase === 'work') s.timeLeft = workMinutes * 60;
+      else if (s.phase === 'shortBreak') s.timeLeft = breakMinutes * 60;
+      else if (s.phase === 'longBreak') s.timeLeft = longBreakMinutes * 60;
+    }
 
+    emitState(sessionId);
+    console.log(`Host ${socket.id} updated times for ${sessionId}:`, s.settings);
+  });
 
   socket.on('disconnect', () => {
     console.log('Socket disconnected:', socket.id);
-    // Mark host as null if host left
+    // If disconnected was host, try to assign a new host from room members
     Object.keys(sessions).forEach((sid) => {
       const s = sessions[sid];
       if (s.hostId === socket.id) {
-        s.hostId = null;
-        io.to(sid).emit('hostLeft');
+        // find another socket in the room
+        const room = io.sockets.adapter.rooms.get(sid); // Set of socket ids
+        let newHost = null;
+        if (room && room.size > 0) {
+          for (const sidInRoom of room) {
+            if (sidInRoom !== socket.id) {
+              newHost = sidInRoom;
+              break;
+            }
+          }
+        }
+        s.hostId = newHost;
+        io.to(sid).emit('hostLeft', { newHostId: newHost });
+        // stop running timer when host leaves to avoid uncontrolled state
+        if (s.timerRef) {
+          clearInterval(s.timerRef);
+          s.timerRef = null;
+          s.running = false;
+        }
       }
     });
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log('Server listening on port', PORT);
-});
+server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
